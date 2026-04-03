@@ -1,0 +1,191 @@
+{
+  "name": "AI Agent \u2014 Jira Ticket Ingestion (Embed + Index)",
+  "_description": "Fetches Jira tickets, builds embed text with edge case handling, generates OpenAI embeddings, upserts into Supabase pgvector. Run manually or on schedule.",
+  "nodes": [
+    {
+      "id": "trigger2",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "fetch_tickets",
+      "name": "Fetch All Jira Tickets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// PRODUCTION: Replace mock data with Jira REST API call:\n// GET https://your-domain.atlassian.net/rest/api/3/search\n// ?jql=project=PROJ&fields=summary,description,status,assignee\n// Auth: Basic base64(email:api_token)\n\nconst mockTickets = [\n  { ticket_id: 'PROJ-101', title: 'Optimize OAuth handshake latency', description: 'Users on mobile devices experience a 2-3 second delay during the OAuth login flow. Investigation points to redundant token validation calls. Need to cache the initial handshake response and reduce round trips to the auth service.', status: 'Done', url: 'https://demo.atlassian.net/browse/PROJ-101' },\n  { ticket_id: 'PROJ-102', title: 'Fix payment gateway timeout on checkout', description: 'Stripe webhook occasionally times out after 30 seconds during high traffic. Implement async processing with a queue to handle retries gracefully.', status: 'Done', url: 'https://demo.atlassian.net/browse/PROJ-102' },\n  { ticket_id: 'PROJ-103', title: 'Dashboard charts not rendering on Safari', description: 'Chart.js graphs fail to render on Safari 16 and below due to a missing polyfill for ResizeObserver. Affects approximately 12% of our user base.', status: 'In Progress', url: 'https://demo.atlassian.net/browse/PROJ-103' },\n  { ticket_id: 'PROJ-104', title: 'Add dark mode support to settings page', description: 'Implement CSS variables and a theme toggle in user preferences. Should persist selection to localStorage and respect system preference on first visit.', status: 'To Do', url: 'https://demo.atlassian.net/browse/PROJ-104' },\n  { ticket_id: 'PROJ-105', title: 'Email notifications not sending for new signups', description: 'SendGrid integration stopped delivering welcome emails after the SMTP config migration. Logs show 421 connection refused errors.', status: 'Done', url: 'https://demo.atlassian.net/browse/PROJ-105' }\n];\n\nreturn mockTickets.map(t => ({ json: t }));"
+      }
+    },
+    {
+      "id": "loop2",
+      "name": "Loop Over Tickets",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "build_embed_text",
+      "name": "Build Embed Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        220
+      ],
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\n// Edge case: handle empty or missing description\nconst title = item.title?.trim() || 'Untitled';\nconst description = item.description?.trim();\n\n// If no description: embed title only, flag for monitoring\nconst embedText = description && description.length > 5\n  ? `${title}. ${description}`\n  : title;\n\nconst hasDescription = !!(description && description.length > 5);\n\nreturn [{ json: { ...item, embed_text: embedText, has_description: hasDescription } }];"
+      }
+    },
+    {
+      "id": "embed2",
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        880,
+        220
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({model: \"text-embedding-3-small\", input: $json.embed_text}) }}"
+      }
+    },
+    {
+      "id": "store2",
+      "name": "Store in Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1100,
+        220
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/jira_tickets?on_conflict=ticket_id",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ticket_id: $('Build Embed Text').item.json.ticket_id, title: $('Build Embed Text').item.json.title, description: $('Build Embed Text').item.json.description, status: $('Build Embed Text').item.json.status, url: $('Build Embed Text').item.json.url, embedding: JSON.stringify($json.data[0].embedding)}) }}"
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch All Jira Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch All Jira Tickets": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tickets": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build Embed Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Embed Text": {
+      "main": [
+        [
+          {
+            "node": "Generate Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Embedding": {
+      "main": [
+        [
+          {
+            "node": "Store in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store in Supabase": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

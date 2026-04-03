@@ -1,0 +1,152 @@
+{
+  "name": "AI Agent \u2014 Part 2: Semantic Ticket Search",
+  "_description": "Chat trigger accepts natural language queries. Embeds query with OpenAI, runs cosine similarity search against Supabase pgvector, returns top 3 matching tickets with similarity scores.",
+  "nodes": [
+    {
+      "id": "chat3",
+      "name": "Chat Trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "options": {}
+      }
+    },
+    {
+      "id": "embed3",
+      "name": "Embed User Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({model: \"text-embedding-3-small\", input: $json.chatInput}) }}"
+      }
+    },
+    {
+      "id": "extract3",
+      "name": "Extract Query Embedding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const embedding = $input.first().json.data[0].embedding;\nconst query = $('Chat Trigger').first().json.chatInput;\n// CRITICAL: must use same model (text-embedding-3-small) as ingestion\nreturn [{ json: { query, query_embedding: JSON.stringify(embedding) } }];"
+      }
+    },
+    {
+      "id": "search3",
+      "name": "Semantic Search Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/rpc/match_tickets",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\"query_embedding\": {{ $json.query_embedding }}, \"match_threshold\": 0.3, \"match_count\": 3}"
+      }
+    },
+    {
+      "id": "format3",
+      "name": "Format Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const results = $input.all();\nconst query = $('Extract Query Embedding').first().json.query;\n\nif (!results || results.length === 0) {\n  return [{ json: { output: `No matching tickets found for: \"${query}\"\\nTry rephrasing or check that the backlog has been indexed.` } }];\n}\n\nconst lines = results.map((r, i) => {\n  const t = r.json;\n  const score = (t.similarity * 100).toFixed(0);\n  const status = t.status || 'Unknown';\n  const desc = t.description ? t.description.substring(0, 100) + '...' : 'No description';\n  return `${i + 1}. [${t.ticket_id}] ${t.title}\\n   Status: ${status} | Match: ${score}%\\n   ${desc}\\n   ${t.url}`;\n}).join('\\n\\n');\n\nreturn [{ json: { output: `Found ${results.length} relevant ticket(s) for: \"${query}\"\\n\\n${lines}` } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Chat Trigger": {
+      "main": [
+        [
+          {
+            "node": "Embed User Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed User Query": {
+      "main": [
+        [
+          {
+            "node": "Extract Query Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Query Embedding": {
+      "main": [
+        [
+          {
+            "node": "Semantic Search Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Semantic Search Supabase": {
+      "main": [
+        [
+          {
+            "node": "Format Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
