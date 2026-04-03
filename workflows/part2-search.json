@@ -20,8 +20,24 @@
     },
     {
       "parameters": {
-        "operation": "create",
-        "requestOptions": {}
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({model: \"text-embedding-3-small\", input: $json.body.message?.text?.replace(/^@[^\\s]+\\s*/, '') || $json.body.message?.text || ''}) }}",
+        "options": {}
       },
       "id": "embed3",
       "maxTries": 3,
@@ -31,8 +47,8 @@
         304
       ],
       "retryOnFail": true,
-      "type": "n8n-nodes-base.openAi",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
       "waitBetweenTries": 5000,
       "credentials": {
         "openAiApi": {
@@ -44,7 +60,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const embedResult = $input.first().json;\n\n// Handle embedding failure\nif (embedResult.error) {\n  return [{ json: {\n    query: 'unknown',\n    query_embedding: null,\n    embed_error: embedResult.error.message\n  }}];\n}\n\nconst embedding = embedResult.embedding;\nconst rawText = $('Google Chat Webhook').first().json.body.message?.text || '';\nconst query = rawText.replace(/^@[^\\s]+\\s*/, '').trim();\n\nreturn [{ json: { query, query_embedding: JSON.stringify(embedding), embed_error: null } }];"
+        "jsCode": "const embedResult = $input.first().json;\n\nif (embedResult.error) {\n  return [{ json: { query: 'unknown', query_embedding: null, embed_error: embedResult.error.message }}];\n}\n\n// HTTP Request to OpenAI returns data[0].embedding\nconst embedding = embedResult.data?.[0]?.embedding;\nif (!embedding) {\n  return [{ json: { query: 'unknown', query_embedding: null, embed_error: 'No embedding in response' }}];\n}\n\nconst rawText = $('Google Chat Webhook').first().json.body.message?.text || '';\nconst query = rawText.replace(/^@[^\\s]+\\s*/, '').trim();\n\nreturn [{ json: { query, query_embedding: JSON.stringify(embedding), embed_error: null } }];"
       },
       "id": "extract3",
       "name": "Extract Query Embedding",
@@ -248,7 +264,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": true
   },
-  "versionId": "c46992c7-c1f2-4e68-ba02-9d3aba3b7322",
+  "versionId": "ccacd07d-4223-4f02-9562-b60e68c6189a",
   "meta": {
     "instanceId": "58d4d3850ce21f8b6754536f74d3fe4b21646a4023554112613018498286758b"
   },
