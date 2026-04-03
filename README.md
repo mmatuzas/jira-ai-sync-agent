@@ -1,4 +1,4 @@
-# AI Sync Agent — MindFriend Test Assignment
+# AI Sync Agent
 
 > **n8n · Supabase pgvector · OpenAI · Google Chat**
 
