@@ -1,99 +1,109 @@
 {
-  "name": "AI Agent \u2014 Jira Ticket Ingestion (Embed + Index)",
-  "_description": "Fetches Jira tickets, builds embed text with edge case handling, generates OpenAI embeddings, upserts into Supabase pgvector. Run manually or on schedule.",
+  "name": "AI Agent — Jira Ticket Ingestion (Embed + Index)",
   "nodes": [
     {
+      "parameters": {},
       "id": "trigger2",
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
       "position": [
         0,
-        300
-      ],
-      "parameters": {}
+        304
+      ]
     },
     {
+      "parameters": {
+        "jsCode": "// PRODUCTION: Replace with Jira REST API\n// GET https://your-domain.atlassian.net/rest/api/3/search\n// ?jql=project=PROJ&fields=summary,description,status,assignee\n// Authorization: Basic base64(email:api_token)\n\nconst mockTickets = [\n  { ticket_id: 'PROJ-101', title: 'Optimize OAuth handshake latency', description: 'Users on mobile devices experience a 2-3 second delay during the OAuth login flow. Investigation points to redundant token validation calls.', status: 'Done', url: 'https://demo.atlassian.net/browse/PROJ-101' },\n  { ticket_id: 'PROJ-102', title: 'Fix payment gateway timeout on checkout', description: 'Stripe webhook occasionally times out after 30 seconds during high traffic.', status: 'Done', url: 'https://demo.atlassian.net/browse/PROJ-102' },\n  { ticket_id: 'PROJ-103', title: 'Dashboard charts not rendering on Safari', description: 'Chart.js graphs fail to render on Safari 16 and below due to a missing polyfill for ResizeObserver.', status: 'In Progress', url: 'https://demo.atlassian.net/browse/PROJ-103' },\n  { ticket_id: 'PROJ-104', title: 'Add dark mode support to settings page', description: 'Implement CSS variables and a theme toggle in user preferences.', status: 'To Do', url: 'https://demo.atlassian.net/browse/PROJ-104' },\n  { ticket_id: 'PROJ-105', title: 'Email notifications not sending for new signups', description: 'SendGrid integration stopped delivering welcome emails after the SMTP config migration.', status: 'Done', url: 'https://demo.atlassian.net/browse/PROJ-105' },\n  { ticket_id: 'PROJ-106', title: 'User profile images not loading after CDN change', description: 'After migrating to CloudFront, avatar images return 403 errors due to missing bucket policy.', status: 'Done', url: 'https://demo.atlassian.net/browse/PROJ-106' },\n  { ticket_id: 'PROJ-107', title: 'Refactor database connection pooling', description: 'Current pg pool exhausts under load with 100+ concurrent users. Migrate to PgBouncer.', status: 'In Progress', url: 'https://demo.atlassian.net/browse/PROJ-107' },\n  { ticket_id: 'PROJ-108', title: 'API rate limiting returns wrong HTTP status', description: 'Rate limiter returns 500 instead of 429 when quota is exceeded.', status: 'Done', url: 'https://demo.atlassian.net/browse/PROJ-108' },\n  { ticket_id: 'PROJ-109', title: 'Search results missing recently created records', description: 'Elasticsearch index has a 5-minute lag due to refresh interval setting.', status: 'To Do', url: 'https://demo.atlassian.net/browse/PROJ-109' },\n  { ticket_id: 'PROJ-110', title: 'Two-factor authentication codes expiring too fast', description: 'TOTP codes expire in 15 seconds instead of standard 30-second window due to server clock drift.', status: 'Done', url: 'https://demo.atlassian.net/browse/PROJ-110' }\n];\nreturn mockTickets.map(t => ({ json: t }));"
+      },
       "id": "fetch_tickets",
       "name": "Fetch All Jira Tickets",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        220,
-        300
-      ],
-      "parameters": {
-        "jsCode": "// PRODUCTION: Replace mock data with Jira REST API call:\n// GET https://your-domain.atlassian.net/rest/api/3/search\n// ?jql=project=PROJ&fields=summary,description,status,assignee\n// Auth: Basic base64(email:api_token)\n\nconst mockTickets = [\n  { ticket_id: 'PROJ-101', title: 'Optimize OAuth handshake latency', description: 'Users on mobile devices experience a 2-3 second delay during the OAuth login flow. Investigation points to redundant token validation calls. Need to cache the initial handshake response and reduce round trips to the auth service.', status: 'Done', url: 'https://demo.atlassian.net/browse/PROJ-101' },\n  { ticket_id: 'PROJ-102', title: 'Fix payment gateway timeout on checkout', description: 'Stripe webhook occasionally times out after 30 seconds during high traffic. Implement async processing with a queue to handle retries gracefully.', status: 'Done', url: 'https://demo.atlassian.net/browse/PROJ-102' },\n  { ticket_id: 'PROJ-103', title: 'Dashboard charts not rendering on Safari', description: 'Chart.js graphs fail to render on Safari 16 and below due to a missing polyfill for ResizeObserver. Affects approximately 12% of our user base.', status: 'In Progress', url: 'https://demo.atlassian.net/browse/PROJ-103' },\n  { ticket_id: 'PROJ-104', title: 'Add dark mode support to settings page', description: 'Implement CSS variables and a theme toggle in user preferences. Should persist selection to localStorage and respect system preference on first visit.', status: 'To Do', url: 'https://demo.atlassian.net/browse/PROJ-104' },\n  { ticket_id: 'PROJ-105', title: 'Email notifications not sending for new signups', description: 'SendGrid integration stopped delivering welcome emails after the SMTP config migration. Logs show 421 connection refused errors.', status: 'Done', url: 'https://demo.atlassian.net/browse/PROJ-105' }\n];\n\nreturn mockTickets.map(t => ({ json: t }));"
-      }
+        224,
+        304
+      ]
     },
     {
+      "parameters": {
+        "options": {}
+      },
       "id": "loop2",
       "name": "Loop Over Tickets",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        440,
-        300
-      ],
-      "parameters": {
-        "batchSize": 1,
-        "options": {}
-      }
+        448,
+        304
+      ]
     },
     {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst title = item.title?.trim() || 'Untitled';\nconst description = item.description?.trim();\n\n// Edge case: embed title only if no description\nconst embedText = description && description.length > 10\n  ? `${title}. ${description}`\n  : title;\n\nreturn [{ json: { ...item, embed_text: embedText, has_description: !!(description && description.length > 10) } }];"
+      },
       "id": "build_embed_text",
       "name": "Build Embed Text",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        660,
-        220
-      ],
-      "parameters": {
-        "jsCode": "const item = $input.first().json;\n\n// Edge case: handle empty or missing description\nconst title = item.title?.trim() || 'Untitled';\nconst description = item.description?.trim();\n\n// If no description: embed title only, flag for monitoring\nconst embedText = description && description.length > 5\n  ? `${title}. ${description}`\n  : title;\n\nconst hasDescription = !!(description && description.length > 5);\n\nreturn [{ json: { ...item, embed_text: embedText, has_description: hasDescription } }];"
-      }
+        672,
+        224
+      ]
     },
     {
+      "parameters": {
+        "operation": "create",
+        "requestOptions": {}
+      },
       "id": "embed2",
       "name": "Generate Embedding",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
       "position": [
         880,
-        220
+        224
       ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "openAiApi": {
+          "id": "Mnx3JB7ylSMnZvAW",
+          "name": "OpenAi revops influ2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
       "parameters": {
-        "method": "POST",
-        "url": "https://api.openai.com/v1/embeddings",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "openAiApi",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
+        "conditions": {
+          "conditions": [
             {
-              "name": "Content-Type",
-              "value": "application/json"
+              "id": "c1",
+              "leftValue": "={{ $json.error?.message }}",
+              "operator": {
+                "type": "string",
+                "operation": "isEmpty"
+              }
             }
           ]
         },
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({model: \"text-embedding-3-small\", input: $json.embed_text}) }}"
-      }
+        "options": {}
+      },
+      "id": "check_error",
+      "name": "Embedding OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        224
+      ]
     },
     {
-      "id": "store2",
-      "name": "Store in Supabase",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [
-        1100,
-        220
-      ],
       "parameters": {
         "method": "POST",
-        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/jira_tickets?on_conflict=ticket_id",
+        "url": "https://krcgtgsmzbjikokfsqxi.supabase.co/rest/v1/jira_tickets?on_conflict=ticket_id",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "supabaseApi",
         "sendHeaders": true,
@@ -112,10 +122,120 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ticket_id: $('Build Embed Text').item.json.ticket_id, title: $('Build Embed Text').item.json.title, description: $('Build Embed Text').item.json.description, status: $('Build Embed Text').item.json.status, url: $('Build Embed Text').item.json.url, embedding: JSON.stringify($json.data[0].embedding)}) }}"
+        "body": "={{ JSON.stringify({ticket_id: $('Build Embed Text').item.json.ticket_id, title: $('Build Embed Text').item.json.title, description: $('Build Embed Text').item.json.description, status: $('Build Embed Text').item.json.status, url: $('Build Embed Text').item.json.url, embedding: JSON.stringify($json.embedding)}) }}",
+        "options": {}
+      },
+      "id": "store2",
+      "name": "Store in Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1328,
+        144
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "upGmVPjWnyM3aDEr",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://krcgtgsmzbjikokfsqxi.supabase.co/rest/v1/error_log",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({workflow: 'Ingestion', node: 'Generate Embedding', error_msg: $('Generate Embedding').item.json.error?.message || 'Unknown embedding error', payload: {ticket_id: $('Build Embed Text').item.json.ticket_id, title: $('Build Embed Text').item.json.title}}) }}",
+        "options": {}
+      },
+      "id": "log_error",
+      "name": "Log Failed Ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1328,
+        352
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "upGmVPjWnyM3aDEr",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "back_to_loop",
+      "name": "Back to Loop",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1552,
+        240
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "error_trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://krcgtgsmzbjikokfsqxi.supabase.co/rest/v1/error_log",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({workflow: 'Ingestion', node: $json.execution?.lastNodeExecuted, error_msg: $json.error?.message, payload: {executionId: $json.execution?.id}}) }}",
+        "options": {}
+      },
+      "id": "log_workflow_error",
+      "name": "Log Workflow Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        224,
+        512
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "upGmVPjWnyM3aDEr",
+          "name": "Supabase account"
+        }
       }
     }
   ],
+  "pinData": {},
   "connections": {
     "Manual Trigger": {
       "main": [
@@ -166,7 +286,25 @@
       "main": [
         [
           {
+            "node": "Embedding OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding OK?": {
+      "main": [
+        [
+          {
             "node": "Store in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Failed Ticket",
             "type": "main",
             "index": 0
           }
@@ -177,7 +315,40 @@
       "main": [
         [
           {
+            "node": "Back to Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Failed Ticket": {
+      "main": [
+        [
+          {
+            "node": "Back to Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Back to Loop": {
+      "main": [
+        [
+          {
             "node": "Loop Over Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Log Workflow Error",
             "type": "main",
             "index": 0
           }
@@ -185,7 +356,21 @@
       ]
     }
   },
+  "active": false,
   "settings": {
-    "executionOrder": "v1"
-  }
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "b2da0a0f-7adb-40e5-ad3f-9288edc4067d",
+  "meta": {
+    "instanceId": "58d4d3850ce21f8b6754536f74d3fe4b21646a4023554112613018498286758b"
+  },
+  "id": "XdkcFAmALpjdQIO7",
+  "tags": []
 }

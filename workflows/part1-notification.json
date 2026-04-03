@@ -1,116 +1,105 @@
 {
-  "name": "AI Agent \u2014 Part 1: Jira Done Notification",
-  "_description": "Triggered by Jira webhook on status change. Filters for Done status, extracts ticket data, generates GPT-4.1 summary, sends to Google Chat and Email.",
+  "name": "AI Agent — Part 1: Jira Done Notification",
   "nodes": [
     {
-      "id": "trigger",
-      "name": "Jira Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        0,
-        300
-      ],
       "parameters": {
         "httpMethod": "POST",
         "path": "jira-done",
         "responseMode": "lastNode",
         "options": {}
-      }
+      },
+      "id": "trigger",
+      "name": "Jira Webhook",
+      "position": [
+        0,
+        304
+      ],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "4927ac71-0c97-4463-98b4-9cb51eaec337"
     },
     {
-      "id": "filter",
-      "name": "Filter: Status = Done",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [
-        220,
-        300
-      ],
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": false
-          },
           "conditions": [
             {
               "id": "c1",
               "leftValue": "={{ $json.body.transition.to.name }}",
-              "rightValue": "Done",
               "operator": {
-                "type": "string",
                 "operation": "equals",
-                "singleValue": false
-              }
+                "singleValue": false,
+                "type": "string"
+              },
+              "rightValue": "Done"
             }
-          ]
-        }
-      }
+          ],
+          "options": {
+            "caseSensitive": false
+          }
+        },
+        "options": {}
+      },
+      "id": "filter",
+      "name": "Filter: Status = Done",
+      "position": [
+        224,
+        304
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
     },
     {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst issue = body.issue || {};\nconst fields = issue.fields || {};\n\nconst rawDesc = fields.description?.content?.[0]?.content?.[0]?.text || '';\nconst description = rawDesc.trim().length > 5 ? rawDesc.trim().substring(0, 300) : 'No description provided';\n\nreturn [{ json: {\n  ticket_id: issue.key || 'UNKNOWN',\n  title: fields.summary || 'Untitled ticket',\n  description,\n  url: `https://your-domain.atlassian.net/browse/${issue.key}`,\n  assignee: fields.assignee?.displayName || 'Unassigned',\n  project: fields.project?.name || 'Unknown'\n} }];"
+      },
       "id": "extract",
       "name": "Extract Ticket Data",
+      "position": [
+        448,
+        224
+      ],
       "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        440,
-        220
-      ],
-      "parameters": {
-        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst issue = body.issue || {};\nconst fields = issue.fields || {};\n\n// Edge case: handle empty or missing description\nconst rawDesc = fields.description?.content?.[0]?.content?.[0]?.text || fields.summary || 'No description provided';\nconst description = rawDesc.trim().length > 0 ? rawDesc : 'No description provided';\n\nreturn [{ json: {\n  ticket_id: issue.key || 'UNKNOWN',\n  title: fields.summary || 'Untitled ticket',\n  description: description.substring(0, 300),\n  url: `https://your-domain.atlassian.net/browse/${issue.key}`,\n  assignee: fields.assignee?.displayName || 'Unassigned',\n  project: fields.project?.name || 'Unknown project'\n} }];"
-      }
+      "typeVersion": 2
     },
     {
+      "parameters": {
+        "resource": "chat",
+        "operation": "create",
+        "requestOptions": {}
+      },
       "id": "summarise",
+      "maxTries": 3,
       "name": "GPT Summarise Ticket",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
       "position": [
-        660,
-        220
+        672,
+        224
       ],
-      "parameters": {
-        "method": "POST",
-        "url": "https://api.openai.com/v1/chat/completions",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "openAiApi",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({model: \"gpt-4.1\", max_tokens: 120, messages: [{role: \"system\", content: \"You write brief one-sentence ticket completion summaries for engineering team notifications. Be specific and factual. Only use information present in the ticket. Never invent details. If description is empty, summarise from title only.\"}, {role: \"user\", content: \"Ticket: \" + $json.title + \". Description: \" + $json.description + \". Write a single sentence summarising what was completed.\"}]}) }}"
-      }
+      "retryOnFail": true,
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "openAiApi": {
+          "id": "Mnx3JB7ylSMnZvAW",
+          "name": "OpenAi revops influ2"
+        }
+      },
+      "onError": "continueRegularOutput"
     },
     {
+      "parameters": {
+        "jsCode": "const ticketData = $('Extract Ticket Data').first().json;\nconst gptResponse = $input.first().json;\n\n// Handle GPT failure gracefully — fall back to raw title\nconst summary = gptResponse.error\n  ? `${ticketData.title} has been completed.`\n  : (gptResponse.choices?.[0]?.message?.content || `${ticketData.title} has been completed.`);\n\nconst message = `[${ticketData.ticket_id}] Done\\n${summary}\\n${ticketData.url}`;\n\nreturn [{ json: { message, ticketData, summary } }];"
+      },
       "id": "build_msg",
       "name": "Build Notification Message",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
       "position": [
         880,
-        220
+        224
       ],
-      "parameters": {
-        "jsCode": "const ticketData = $('Extract Ticket Data').first().json;\nconst gptResponse = $input.first().json;\nconst summary = gptResponse.choices?.[0]?.message?.content || ticketData.title;\n\nconst message = {\n  text: `\u2705 *${ticketData.ticket_id} \u2014 Done*\\n${summary}\\n\ud83d\udd17 ${ticketData.url}`\n};\n\nreturn [{ json: { message, ticketData, summary } }];"
-      }
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
     },
     {
-      "id": "notify_chat",
-      "name": "Google Chat Notification",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [
-        1100,
-        160
-      ],
       "parameters": {
         "method": "POST",
         "url": "YOUR_GOOGLE_CHAT_WEBHOOK_URL",
@@ -126,67 +115,110 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({text: $('Build Notification Message').first().json.message.text}) }}"
-      }
+        "body": "={{ JSON.stringify({text: $json.message}) }}",
+        "options": {}
+      },
+      "id": "notify_chat",
+      "name": "Google Chat Notification",
+      "position": [
+        1104,
+        160
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "onError": "continueRegularOutput"
     },
     {
-      "id": "notify_email",
-      "name": "Email Notification",
-      "type": "n8n-nodes-base.emailSend",
-      "typeVersion": 2,
-      "position": [
-        1100,
-        300
-      ],
       "parameters": {
         "fromEmail": "agent@yourdomain.com",
         "toEmail": "team@yourdomain.com",
-        "subject": "={{ '[Done] ' + $('Extract Ticket Data').first().json.ticket_id + ' \u2014 ' + $('Extract Ticket Data').first().json.title }}",
-        "emailType": "text",
-        "message": "={{ $('Build Notification Message').first().json.summary + '\\n\\nView ticket: ' + $('Extract Ticket Data').first().json.url }}",
+        "subject": "={{ '[Done] ' + $('Extract Ticket Data').first().json.ticket_id + ' — ' + $('Extract Ticket Data').first().json.title }}",
         "options": {}
-      }
+      },
+      "id": "notify_email",
+      "name": "Email Notification",
+      "position": [
+        1104,
+        336
+      ],
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "webhookId": "9b3f08bf-fa31-4ab6-8225-548f264bb4b0",
+      "onError": "continueRegularOutput"
     },
     {
-      "id": "error_handler",
-      "name": "Error Handler",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "parameters": {},
+      "id": "error_trigger2",
+      "name": "Error Trigger",
       "position": [
-        440,
-        420
+        0,
+        512
       ],
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1
+    },
+    {
       "parameters": {
-        "jsCode": "// Non-Done status transitions land here \u2014 log and ignore\nconst error = $input.first().json;\nconsole.log('Ignored transition (not Done):', JSON.stringify(error?.body?.transition?.to?.name));\nreturn [{ json: { status: 'ignored', reason: 'not a Done transition' } }];"
+        "method": "POST",
+        "url": "https://krcgtgsmzbjikokfsqxi.supabase.co/rest/v1/error_log",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({workflow: 'Part1-Notification', node: $json.execution?.lastNodeExecuted, error_msg: $json.error?.message, payload: {executionId: $json.execution?.id}}) }}",
+        "options": {}
+      },
+      "id": "log_err2",
+      "name": "Log Workflow Error",
+      "position": [
+        224,
+        512
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "credentials": {
+        "supabaseApi": {
+          "id": "upGmVPjWnyM3aDEr",
+          "name": "Supabase account"
+        }
       }
     }
   ],
+  "pinData": {},
   "connections": {
-    "Jira Webhook": {
+    "Build Notification Message": {
       "main": [
         [
           {
-            "node": "Filter: Status = Done",
-            "type": "main",
-            "index": 0
+            "index": 0,
+            "node": "Google Chat Notification",
+            "type": "main"
+          },
+          {
+            "index": 0,
+            "node": "Email Notification",
+            "type": "main"
           }
         ]
       ]
     },
-    "Filter: Status = Done": {
+    "Error Trigger": {
       "main": [
         [
           {
-            "node": "Extract Ticket Data",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Error Handler",
-            "type": "main",
-            "index": 0
+            "index": 0,
+            "node": "Log Workflow Error",
+            "type": "main"
           }
         ]
       ]
@@ -195,42 +227,63 @@
       "main": [
         [
           {
+            "index": 0,
             "node": "GPT Summarise Ticket",
-            "type": "main",
-            "index": 0
+            "type": "main"
           }
         ]
+      ]
+    },
+    "Filter: Status = Done": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Extract Ticket Data",
+            "type": "main"
+          }
+        ],
+        []
       ]
     },
     "GPT Summarise Ticket": {
       "main": [
         [
           {
+            "index": 0,
             "node": "Build Notification Message",
-            "type": "main",
-            "index": 0
+            "type": "main"
           }
         ]
       ]
     },
-    "Build Notification Message": {
+    "Jira Webhook": {
       "main": [
         [
           {
-            "node": "Google Chat Notification",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Email Notification",
-            "type": "main",
-            "index": 0
+            "index": 0,
+            "node": "Filter: Status = Done",
+            "type": "main"
           }
         ]
       ]
     }
   },
+  "active": false,
   "settings": {
-    "executionOrder": "v1"
-  }
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "8790cc88-8b31-4f5e-8dd4-72be786a978c",
+  "meta": {
+    "instanceId": "58d4d3850ce21f8b6754536f74d3fe4b21646a4023554112613018498286758b"
+  },
+  "id": "fQv2hhPSYFZ1GIAi",
+  "tags": []
 }

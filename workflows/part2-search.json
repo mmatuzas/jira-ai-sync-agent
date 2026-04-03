@@ -1,74 +1,64 @@
 {
-  "name": "AI Agent \u2014 Part 2: Semantic Ticket Search",
-  "_description": "Chat trigger accepts natural language queries. Embeds query with OpenAI, runs cosine similarity search against Supabase pgvector, returns top 3 matching tickets with similarity scores.",
+  "name": "AI Agent — Part 2: Semantic Ticket Search (Google Chat Bot)",
   "nodes": [
     {
-      "id": "chat3",
-      "name": "Chat Trigger",
-      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
-      "typeVersion": 1.1,
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jira-search",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "gchat_webhook",
+      "name": "Google Chat Webhook",
       "position": [
         0,
-        300
+        304
       ],
-      "parameters": {
-        "options": {}
-      }
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "f97985d2-d5f4-4d10-8eaf-a39e35d725a1"
     },
     {
+      "parameters": {
+        "operation": "create",
+        "requestOptions": {}
+      },
       "id": "embed3",
-      "name": "Embed User Query",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
+      "maxTries": 3,
+      "name": "Generate Query Embedding",
       "position": [
-        220,
-        300
+        224,
+        304
       ],
-      "parameters": {
-        "method": "POST",
-        "url": "https://api.openai.com/v1/embeddings",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "openAiApi",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({model: \"text-embedding-3-small\", input: $json.chatInput}) }}"
-      }
+      "retryOnFail": true,
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "openAiApi": {
+          "id": "Mnx3JB7ylSMnZvAW",
+          "name": "OpenAi revops influ2"
+        }
+      },
+      "onError": "continueRegularOutput"
     },
     {
+      "parameters": {
+        "jsCode": "const embedResult = $input.first().json;\n\n// Handle embedding failure\nif (embedResult.error) {\n  return [{ json: {\n    query: 'unknown',\n    query_embedding: null,\n    embed_error: embedResult.error.message\n  }}];\n}\n\nconst embedding = embedResult.embedding;\nconst rawText = $('Google Chat Webhook').first().json.body.message?.text || '';\nconst query = rawText.replace(/^@[^\\s]+\\s*/, '').trim();\n\nreturn [{ json: { query, query_embedding: JSON.stringify(embedding), embed_error: null } }];"
+      },
       "id": "extract3",
       "name": "Extract Query Embedding",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
       "position": [
-        440,
-        300
+        448,
+        304
       ],
-      "parameters": {
-        "jsCode": "const embedding = $input.first().json.data[0].embedding;\nconst query = $('Chat Trigger').first().json.chatInput;\n// CRITICAL: must use same model (text-embedding-3-small) as ingestion\nreturn [{ json: { query, query_embedding: JSON.stringify(embedding) } }];"
-      }
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
     },
     {
-      "id": "search3",
-      "name": "Semantic Search Supabase",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [
-        660,
-        300
-      ],
       "parameters": {
         "method": "POST",
-        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/rpc/match_tickets",
+        "url": "https://krcgtgsmzbjikokfsqxi.supabase.co/rest/v1/rpc/match_tickets",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "supabaseApi",
         "sendHeaders": true,
@@ -83,42 +73,110 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={\"query_embedding\": {{ $json.query_embedding }}, \"match_threshold\": 0.3, \"match_count\": 3}"
-      }
+        "body": "={\"query_embedding\": {{ $json.query_embedding }}, \"match_threshold\": 0.3, \"match_count\": 3}",
+        "options": {}
+      },
+      "id": "search3",
+      "name": "Semantic Search Supabase",
+      "position": [
+        672,
+        304
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "credentials": {
+        "supabaseApi": {
+          "id": "upGmVPjWnyM3aDEr",
+          "name": "Supabase account"
+        }
+      },
+      "onError": "continueRegularOutput"
     },
     {
+      "parameters": {
+        "jsCode": "const results = $input.all();\nconst ctx = $('Extract Query Embedding').first().json;\nconst query = ctx.query || 'your query';\n\n// Embedding failed\nif (ctx.embed_error) {\n  return [{ json: { text: `Sorry, I couldn't process your search right now. Please try again.` } }];\n}\n\n// Search returned no results\nif (!results || results.length === 0 || results[0].json?.code) {\n  return [{ json: { text: `No matching tickets found for: \"${query}\"\\n\\nTry rephrasing, or check that the backlog has been indexed.` } }];\n}\n\nconst lines = results.map((r, i) => {\n  const t = r.json;\n  const score = (t.similarity * 100).toFixed(0);\n  return `${i + 1}. *${t.ticket_id}* ${t.title}\\n   Status: ${t.status} | Match: ${score}%\\n   ${t.url}`;\n}).join('\\n\\n');\n\nreturn [{ json: { text: `Found ${results.length} ticket(s) for: \"${query}\"\\n\\n${lines}` } }];"
+      },
       "id": "format3",
-      "name": "Format Results",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "name": "Format and Reply",
       "position": [
         880,
-        300
+        304
       ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
       "parameters": {
-        "jsCode": "const results = $input.all();\nconst query = $('Extract Query Embedding').first().json.query;\n\nif (!results || results.length === 0) {\n  return [{ json: { output: `No matching tickets found for: \"${query}\"\\nTry rephrasing or check that the backlog has been indexed.` } }];\n}\n\nconst lines = results.map((r, i) => {\n  const t = r.json;\n  const score = (t.similarity * 100).toFixed(0);\n  const status = t.status || 'Unknown';\n  const desc = t.description ? t.description.substring(0, 100) + '...' : 'No description';\n  return `${i + 1}. [${t.ticket_id}] ${t.title}\\n   Status: ${status} | Match: ${score}%\\n   ${desc}\\n   ${t.url}`;\n}).join('\\n\\n');\n\nreturn [{ json: { output: `Found ${results.length} relevant ticket(s) for: \"${query}\"\\n\\n${lines}` } }];"
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({text: $json.text}) }}",
+        "options": {}
+      },
+      "id": "reply_chat",
+      "name": "Reply to Google Chat",
+      "position": [
+        1104,
+        304
+      ],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {},
+      "id": "error_trigger3",
+      "name": "Error Trigger",
+      "position": [
+        0,
+        512
+      ],
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://krcgtgsmzbjikokfsqxi.supabase.co/rest/v1/error_log",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({workflow: 'Part2-SemanticSearch', node: $json.execution?.lastNodeExecuted, error_msg: $json.error?.message, payload: {executionId: $json.execution?.id}}) }}",
+        "options": {}
+      },
+      "id": "log_err3",
+      "name": "Log Workflow Error",
+      "position": [
+        224,
+        512
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "credentials": {
+        "supabaseApi": {
+          "id": "upGmVPjWnyM3aDEr",
+          "name": "Supabase account"
+        }
       }
     }
   ],
+  "pinData": {},
   "connections": {
-    "Chat Trigger": {
+    "Error Trigger": {
       "main": [
         [
           {
-            "node": "Embed User Query",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Embed User Query": {
-      "main": [
-        [
-          {
-            "node": "Extract Query Embedding",
-            "type": "main",
-            "index": 0
+            "index": 0,
+            "node": "Log Workflow Error",
+            "type": "main"
           }
         ]
       ]
@@ -127,9 +185,42 @@
       "main": [
         [
           {
+            "index": 0,
             "node": "Semantic Search Supabase",
-            "type": "main",
-            "index": 0
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Format and Reply": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Reply to Google Chat",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Generate Query Embedding": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Extract Query Embedding",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Google Chat Webhook": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Generate Query Embedding",
+            "type": "main"
           }
         ]
       ]
@@ -138,15 +229,29 @@
       "main": [
         [
           {
-            "node": "Format Results",
-            "type": "main",
-            "index": 0
+            "index": 0,
+            "node": "Format and Reply",
+            "type": "main"
           }
         ]
       ]
     }
   },
+  "active": false,
   "settings": {
-    "executionOrder": "v1"
-  }
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "versionId": "c46992c7-c1f2-4e68-ba02-9d3aba3b7322",
+  "meta": {
+    "instanceId": "58d4d3850ce21f8b6754536f74d3fe4b21646a4023554112613018498286758b"
+  },
+  "id": "NERxbZOX3hyWNHIb",
+  "tags": []
 }

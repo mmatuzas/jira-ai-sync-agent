@@ -126,3 +126,40 @@ Evaluated against Pinecone, Qdrant, and Weaviate. For this use case (10k–100k 
 | Testing + mock data + semantic search validation | 30 min |
 | Written sections + documentation | 45 min |
 | **Total** | **~6 hours** |
+
+---
+
+## Potential Next Steps
+
+### 1. Intent Classification Before Search
+
+Currently every message goes straight to vector search. A production bot should first classify intent:
+
+```
+User message → GPT classify intent → route
+  ├── semantic_search  → embed → cosine search → reply
+  ├── structured_query → Jira REST API (list, count, fetch by ID) → reply
+  └── unknown          → "I can search your Jira backlog. Try: did we fix X?"
+```
+
+This handles queries like "show me all open tickets" or "what is PROJ-101" correctly — those need SQL/REST, not vector search.
+
+### 2. Jira Webhook for Real-time Ingestion
+
+The current ingestion runs on a schedule. A better approach is to also trigger re-embedding whenever a ticket is created or updated in Jira, keeping the vector index fresh in real time.
+
+### 3. Hybrid Search (Semantic + Metadata Filters)
+
+Extend `match_tickets()` to accept structured filters alongside the vector query:
+
+```sql
+WHERE status = 'Done'
+  AND metadata->>'assignee' = 'sarah'
+  AND 1 - (embedding <=> query_embedding) > 0.3
+```
+
+This handles queries like "what authentication tickets did Sarah close last month?" — combining semantic meaning with structured constraints in a single query.
+
+### 4. Feedback Loop
+
+Add a thumbs up/down reaction handler in Google Chat. When a user reacts negatively to a result, log the query + result pair to a `search_feedback` table. Use that data to periodically fine-tune the similarity threshold or improve ticket descriptions.
